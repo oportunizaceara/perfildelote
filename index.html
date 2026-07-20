@@ -1173,12 +1173,21 @@
       margin-bottom: 1rem;
       line-height: 1.4;
     }
-    .login-hint {
-      margin-top: 1.25rem;
-      font-size: .75rem;
+    .login-remember {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      margin: -.25rem 0 .25rem;
+      font-size: .8125rem;
       color: var(--fg-muted);
-      text-align: center;
-      line-height: 1.5;
+      cursor: pointer;
+      user-select: none;
+    }
+    .login-remember input {
+      width: 1rem;
+      height: 1rem;
+      accent-color: var(--primary);
+      cursor: pointer;
     }
     .sync-status {
       display: inline-flex;
@@ -1231,9 +1240,12 @@
           <label for="login-senha">Senha</label>
           <input id="login-senha" type="password" autocomplete="current-password" placeholder="••••••••" required />
         </div>
+        <label class="login-remember" for="login-remember">
+          <input type="checkbox" id="login-remember" checked />
+          Lembrar login
+        </label>
         <button type="submit" class="btn" id="btn-login">Entrar</button>
       </form>
-      <p class="login-hint">Use o e-mail e senha configurados no Firebase Authentication.<br />Os dados sincronizam em tempo real entre dispositivos.</p>
     </div>
   </div>
 
@@ -1338,18 +1350,50 @@
 
   <div id="modal-root"></div>
 
-  <script type="module">
-    import {
-      login,
-      logout,
-      onAuthChange,
-      subscribeRelatorios,
-      saveRelatorios,
-      fetchRelatoriosOnce,
-    } from "./src/firebase.js"
+  <script src="https://www.gstatic.com/firebasejs/11.6.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.6.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.6.0/firebase-database-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyB8ukCOCKHc1GRkDJ5BpMlSF_iRyEO4pZk",
+      authDomain: "perfil-de-lote.firebaseapp.com",
+      databaseURL: "https://perfil-de-lote-default-rtdb.firebaseio.com",
+      projectId: "perfil-de-lote",
+      storageBucket: "perfil-de-lote.firebasestorage.app",
+      messagingSenderId: "83277777318",
+      appId: "1:83277777318:web:9357e7e2a07379fc21a767",
+    }
+    firebase.initializeApp(firebaseConfig)
+    const fbAuth = firebase.auth()
+    const fbDb = firebase.database()
+    const FB_DATA_PATH = "dados/relatorios"
+
+    function fbLogin(email, password) {
+      return fbAuth.signInWithEmailAndPassword(email, password)
+    }
+    function fbLogout() {
+      return fbAuth.signOut()
+    }
+    function fbOnAuthChange(callback) {
+      return fbAuth.onAuthStateChanged(callback)
+    }
+    function fbSubscribeRelatorios(callback) {
+      const r = fbDb.ref(FB_DATA_PATH)
+      r.on("value", (snap) => callback(snap.val() ?? []))
+      return () => r.off("value")
+    }
+    async function fbSaveRelatorios(data) {
+      await fbDb.ref(FB_DATA_PATH).set(data)
+    }
+    async function fbFetchRelatoriosOnce() {
+      const snap = await fbDb.ref(FB_DATA_PATH).once("value")
+      return snap.val() ?? []
+    }
 
     const STORAGE_KEY = "perfil-lote:relatorios:v1"
     const THEME_KEY = "perfil-lote:theme:v1"
+    const REMEMBER_EMAIL_KEY = "perfil-lote:remember-email"
+    const REMEMBER_CHECK_KEY = "perfil-lote:remember-login"
 
     const SEXO_LABEL = { feminino: "Feminino", masculino: "Masculino", outros: "Outros" }
 
@@ -1611,9 +1655,9 @@
         if (!raw) return false
         const local = JSON.parse(raw)
         if (!Array.isArray(local) || local.length === 0) return false
-        const remote = await fetchRelatoriosOnce()
+        const remote = await fbFetchRelatoriosOnce()
         if (Array.isArray(remote) && remote.length > 0) return false
-        await saveRelatorios(local)
+        await fbSaveRelatorios(local)
         localStorage.removeItem(STORAGE_KEY)
         return true
       } catch {
@@ -1631,7 +1675,7 @@
       clearTimeout(saveTimer)
       saveTimer = setTimeout(async () => {
         try {
-          await saveRelatorios(relatorios)
+          await fbSaveRelatorios(relatorios)
           setSyncStatus("live")
         } catch {
           setSyncStatus("error")
@@ -1658,7 +1702,7 @@
 
     function startRealtimeSync() {
       if (unsubscribeDb) unsubscribeDb()
-      unsubscribeDb = subscribeRelatorios((data) => {
+      unsubscribeDb = fbSubscribeRelatorios((data) => {
         applyRemoteRelatorios(data)
       })
     }
@@ -1669,11 +1713,23 @@
       const btn = document.getElementById("btn-login")
       const email = document.getElementById("login-email").value.trim()
       const senha = document.getElementById("login-senha").value
+      const lembrar = document.getElementById("login-remember").checked
       erro.classList.add("hidden")
       btn.disabled = true
       btn.textContent = "Entrando..."
       try {
-        await login(email, senha)
+        const persistence = lembrar
+          ? firebase.auth.Auth.Persistence.LOCAL
+          : firebase.auth.Auth.Persistence.SESSION
+        await fbAuth.setPersistence(persistence)
+        await fbLogin(email, senha)
+        if (lembrar) {
+          localStorage.setItem(REMEMBER_CHECK_KEY, "1")
+          localStorage.setItem(REMEMBER_EMAIL_KEY, email)
+        } else {
+          localStorage.removeItem(REMEMBER_CHECK_KEY)
+          localStorage.removeItem(REMEMBER_EMAIL_KEY)
+        }
       } catch (err) {
         const msg = err?.code === "auth/invalid-credential" || err?.code === "auth/wrong-password"
           ? "E-mail ou senha incorretos."
@@ -1698,7 +1754,7 @@
       selectedId = null
       focusedTurmaId = null
       expandedTurmas.clear()
-      await logout()
+      await fbLogout()
     }
 
     function getSelected() {
@@ -2861,11 +2917,27 @@
       }
     })
 
+    function loadRememberedLogin() {
+      const lembrar = localStorage.getItem(REMEMBER_CHECK_KEY) === "1"
+      const email = localStorage.getItem(REMEMBER_EMAIL_KEY) || ""
+      document.getElementById("login-remember").checked = lembrar
+      if (lembrar && email) {
+        document.getElementById("login-email").value = email
+      }
+    }
+
     // Init
     loadTheme()
+    loadRememberedLogin()
     showLogin()
 
-    onAuthChange(async (user) => {
+    if (location.protocol === "file:") {
+      const aviso = document.getElementById("login-erro")
+      aviso.innerHTML = "Não abra o arquivo direto. Execute <strong>iniciar.bat</strong> na pasta do projeto e acesse <strong>http://localhost:8080</strong>."
+      aviso.classList.remove("hidden")
+    }
+
+    fbOnAuthChange(async (user) => {
       if (user) {
         showApp(user)
         await migrateLocalToCloud()
