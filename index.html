@@ -1368,26 +1368,67 @@
     const fbDb = firebase.database()
     const FB_DATA_PATH = "dados/relatorios"
 
-    /** Firebase RTDB grava arrays como {0:…, 1:…}; normaliza para array real. */
+    /** Converte listas do Firebase ({0:…, 1:…}) em array JavaScript. */
+    function toArray(raw) {
+      if (raw == null) return []
+      if (Array.isArray(raw)) return raw.filter(Boolean)
+      if (typeof raw !== "object") return []
+      const keys = Object.keys(raw).filter((k) => /^\d+$/.test(k))
+      if (keys.length === 0) return []
+      return keys.sort((a, b) => Number(a) - Number(b)).map((k) => raw[k]).filter(Boolean)
+    }
+
+    function normalizeAluno(a) {
+      if (!a || typeof a !== "object") return null
+      const sexo = ["feminino", "masculino", "outros"].includes(a.sexo) ? a.sexo : "outros"
+      return {
+        id: a.id || uid(),
+        nome: String(a.nome ?? "").trim(),
+        sexo,
+        dataNascimento: a.dataNascimento || "",
+        idade: Number(a.idade) >= 0 ? Number(a.idade) : 0,
+        municipio: a.municipio || "",
+      }
+    }
+
+    function normalizeTurma(t) {
+      if (!t || typeof t !== "object") return null
+      return {
+        id: t.id || uid(),
+        turmaId: String(t.turmaId ?? "").trim(),
+        municipio: t.municipio || "",
+        tipologia: t.tipologia || "",
+        curso: t.curso || "",
+        dataInicio: t.dataInicio || "",
+        dataFim: t.dataFim || "",
+        concludentes: Number(t.concludentes) >= 0 ? Number(t.concludentes) : 0,
+        alunos: toArray(t.alunos).map(normalizeAluno).filter(Boolean),
+      }
+    }
+
+    function normalizeRelatorio(r) {
+      if (!r || typeof r !== "object") return null
+      return {
+        id: r.id || uid(),
+        nome: String(r.nome ?? "Relatório").trim(),
+        criadoEm: r.criadoEm || "",
+        importadoEm: r.importadoEm || undefined,
+        turmas: toArray(r.turmas).map(normalizeTurma).filter(Boolean),
+      }
+    }
+
+    /** Normaliza relatórios e todos os níveis aninhados (turmas, alunos). */
     function normalizeRelatorios(raw) {
       if (raw == null) return []
-      if (Array.isArray(raw)) return raw
-      if (typeof raw !== "object") return []
-      if (raw.items != null) {
-        if (Array.isArray(raw.items)) return raw.items
-        if (typeof raw.items === "object") {
-          return Object.keys(raw.items)
-            .sort((a, b) => Number(a) - Number(b))
-            .map((k) => raw.items[k])
-            .filter(Boolean)
-        }
+      let list = []
+      if (Array.isArray(raw)) {
+        list = raw
+      } else if (typeof raw === "object") {
+        if (raw.items != null) list = toArray(raw.items)
+        else if (Array.isArray(raw.relatorios)) list = raw.relatorios
+        else list = toArray(raw)
       }
-      if (Array.isArray(raw.relatorios)) return raw.relatorios
-      const keys = Object.keys(raw).filter((k) => k !== "v" && k !== "updatedAt" && k !== "items")
-      if (keys.length > 0 && keys.every((k) => /^\d+$/.test(k))) {
-        return keys.sort((a, b) => Number(a) - Number(b)).map((k) => raw[k]).filter(Boolean)
-      }
-      return []
+      return list.map(normalizeRelatorio).filter(Boolean)
     }
 
     function fbLogin(email, password) {
@@ -1405,7 +1446,7 @@
       return () => r.off("value")
     }
     async function fbSaveRelatorios(data) {
-      const items = Array.isArray(data) ? data : normalizeRelatorios(data)
+      const items = normalizeRelatorios(data)
       await fbDb.ref(FB_DATA_PATH).set({
         v: 1,
         items,
@@ -1440,15 +1481,18 @@
     }
 
     function calcularPerfil(alunos) {
+      const lista = toArray(alunos)
       const linhas = FAIXAS_ETARIAS.map((f) => ({
         label: f.label, feminino: 0, masculino: 0, outros: 0, total: 0,
       }))
-      for (const aluno of alunos) {
+      for (const aluno of lista) {
+        if (!aluno || aluno.idade == null) continue
         const faixa = faixaDeIdade(aluno.idade)
         if (!faixa) continue
         const linha = linhas.find((l) => l.label === faixa.label)
         if (!linha) continue
-        linha[aluno.sexo] += 1
+        const sexo = aluno.sexo in linha ? aluno.sexo : "outros"
+        linha[sexo] += 1
         linha.total += 1
       }
       const totalGeral = {
@@ -1500,8 +1544,8 @@
     }
 
     function calcularDashboard(rels) {
-      const turmas = rels.flatMap((r) => r.turmas)
-      const alunos = turmas.flatMap((t) => t.alunos)
+      const turmas = rels.flatMap((r) => toArray(r.turmas))
+      const alunos = turmas.flatMap((t) => toArray(t.alunos))
       const inscritos = alunos.length
       const concludentes = turmas.reduce((s, t) => s + turmaConcludentes(t), 0)
       const municipios = new Set(turmas.map((t) => t.municipio?.trim()).filter(Boolean))
@@ -2144,7 +2188,7 @@
           const lista = Array.isArray(data) ? data : data.relatorios
           if (!Array.isArray(lista)) throw new Error("formato inválido")
           if (!confirm(`Restaurar backup com ${lista.length} relatório(s)? Isso substituirá todos os dados atuais.`)) return
-          relatorios = lista
+          relatorios = normalizeRelatorios(lista)
           selectedId = null
           focusedTurmaId = null
           expandedTurmas.clear()
@@ -2441,8 +2485,8 @@
         return
       }
 
-      const todosAlunos = selected.turmas.flatMap((t) => t.alunos)
-      const totalConcludentes = selected.turmas.reduce((s, t) => s + turmaConcludentes(t), 0)
+      const todosAlunos = toArray(selected.turmas).flatMap((t) => toArray(t.alunos))
+      const totalConcludentes = toArray(selected.turmas).reduce((s, t) => s + turmaConcludentes(t), 0)
       const idsDuplicados = idsDuplicadosNoRelatorio(selected, relatorios)
       const alertaDup = idsDuplicados.length > 0
         ? `<div class="alert-duplicados"><strong>IDs de turma duplicados:</strong> ${idsDuplicados.map(escapeHtml).join(", ")}. Estes IDs aparecem em mais de uma turma ou em <strong>outros relatórios</strong>.</div>`
