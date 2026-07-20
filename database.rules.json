@@ -1,0 +1,10 @@
+{
+  "rules": {
+    "dados": {
+      "relatorios": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    }
+  }
+}
