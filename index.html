@@ -1368,6 +1368,28 @@
     const fbDb = firebase.database()
     const FB_DATA_PATH = "dados/relatorios"
 
+    /** Firebase RTDB grava arrays como {0:…, 1:…}; normaliza para array real. */
+    function normalizeRelatorios(raw) {
+      if (raw == null) return []
+      if (Array.isArray(raw)) return raw
+      if (typeof raw !== "object") return []
+      if (raw.items != null) {
+        if (Array.isArray(raw.items)) return raw.items
+        if (typeof raw.items === "object") {
+          return Object.keys(raw.items)
+            .sort((a, b) => Number(a) - Number(b))
+            .map((k) => raw.items[k])
+            .filter(Boolean)
+        }
+      }
+      if (Array.isArray(raw.relatorios)) return raw.relatorios
+      const keys = Object.keys(raw).filter((k) => k !== "v" && k !== "updatedAt" && k !== "items")
+      if (keys.length > 0 && keys.every((k) => /^\d+$/.test(k))) {
+        return keys.sort((a, b) => Number(a) - Number(b)).map((k) => raw[k]).filter(Boolean)
+      }
+      return []
+    }
+
     function fbLogin(email, password) {
       return fbAuth.signInWithEmailAndPassword(email, password)
     }
@@ -1379,15 +1401,20 @@
     }
     function fbSubscribeRelatorios(callback) {
       const r = fbDb.ref(FB_DATA_PATH)
-      r.on("value", (snap) => callback(snap.val() ?? []))
+      r.on("value", (snap) => callback(normalizeRelatorios(snap.val())))
       return () => r.off("value")
     }
     async function fbSaveRelatorios(data) {
-      await fbDb.ref(FB_DATA_PATH).set(data)
+      const items = Array.isArray(data) ? data : normalizeRelatorios(data)
+      await fbDb.ref(FB_DATA_PATH).set({
+        v: 1,
+        items,
+        updatedAt: firebase.database.ServerValue.TIMESTAMP,
+      })
     }
     async function fbFetchRelatoriosOnce() {
       const snap = await fbDb.ref(FB_DATA_PATH).once("value")
-      return snap.val() ?? []
+      return normalizeRelatorios(snap.val())
     }
 
     const STORAGE_KEY = "perfil-lote:relatorios:v1"
@@ -1639,7 +1666,7 @@
 
     function applyRemoteRelatorios(data) {
       syncingFromRemote = true
-      relatorios = Array.isArray(data) ? data : []
+      relatorios = normalizeRelatorios(data)
       if (selectedId && !relatorios.some((r) => r.id === selectedId)) {
         selectedId = null
         focusedTurmaId = null
@@ -1656,7 +1683,7 @@
         const local = JSON.parse(raw)
         if (!Array.isArray(local) || local.length === 0) return false
         const remote = await fbFetchRelatoriosOnce()
-        if (Array.isArray(remote) && remote.length > 0) return false
+        if (remote.length > 0) return false
         await fbSaveRelatorios(local)
         localStorage.removeItem(STORAGE_KEY)
         return true
@@ -1966,6 +1993,7 @@
 
     function renderBreadcrumb() {
       const el = document.getElementById("breadcrumb")
+      if (!el) return
       const selected = getSelected()
       let html = `<button class="breadcrumb-item ${!selected ? "current" : ""}" data-bc-home>Dashboard</button>`
 
@@ -2092,10 +2120,11 @@
     }
 
     function exportBackup() {
+      const lista = normalizeRelatorios(relatorios)
       const payload = {
         version: 1,
         exportadoEm: new Date().toISOString(),
-        relatorios,
+        relatorios: lista,
       }
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
       const url = URL.createObjectURL(blob)
@@ -2159,6 +2188,7 @@
 
     function renderNav() {
       const nav = document.getElementById("nav-list")
+      if (!nav) return
       let html = `
         <button class="nav-item ${selectedId === null ? "active" : ""}" data-home>
           <span class="nav-item-icon">${icon("home")}</span>
@@ -2403,6 +2433,7 @@
 
     function renderMain() {
       const main = document.getElementById("main")
+      if (!main) return
       const selected = getSelected()
 
       if (!selected) {
@@ -2449,10 +2480,20 @@
     }
 
     function render() {
-      renderNav()
-      renderBreadcrumb()
-      renderNotificacoes()
-      renderMain()
+      if (!authReady) return
+      if (!Array.isArray(relatorios)) relatorios = normalizeRelatorios(relatorios)
+      try {
+        renderNav()
+        renderBreadcrumb()
+        renderNotificacoes()
+        renderMain()
+      } catch (err) {
+        console.error("Erro ao renderizar:", err)
+        const main = document.getElementById("main")
+        if (main) {
+          main.innerHTML = `<div class="content"><div class="login-erro">Erro ao carregar a página. Recarregue ou restaure um backup.<br><small>${escapeHtml(err.message)}</small></div></div>`
+        }
+      }
     }
 
     // --- Modals ---
