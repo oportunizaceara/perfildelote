@@ -651,6 +651,35 @@
       color: var(--fg-muted);
       margin-bottom: .875rem;
     }
+    .section-title-row {
+      display: flex;
+      align-items: center;
+      gap: .375rem;
+      margin-bottom: .875rem;
+    }
+    .section-title-row .section-title { margin-bottom: 0; }
+    .btn-edit-meta {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.625rem;
+      height: 1.625rem;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--fg-muted);
+      cursor: pointer;
+      padding: 0;
+      flex-shrink: 0;
+      transition: background .12s, color .12s;
+    }
+    .btn-edit-meta:hover { background: var(--sidebar-accent); color: var(--primary); }
+    .btn-edit-meta .icon { width: .875rem; height: .875rem; }
+    .meta-cell-value {
+      display: inline-flex;
+      align-items: center;
+      gap: .375rem;
+    }
     .section { margin-bottom: 2.5rem; }
     .panel {
       background: var(--card);
@@ -1442,20 +1471,31 @@
     }
     function fbSubscribeRelatorios(callback) {
       const r = fbDb.ref(FB_DATA_PATH)
-      r.on("value", (snap) => callback(normalizeRelatorios(snap.val())))
+      r.on("value", (snap) => callback(parseCloudPayload(snap.val())))
       return () => r.off("value")
     }
-    async function fbSaveRelatorios(data) {
+    async function fbSaveRelatorios(data, meta) {
       const items = normalizeRelatorios(data)
       await fbDb.ref(FB_DATA_PATH).set({
         v: 1,
         items,
+        metaAtendimento: Number(meta ?? metaAtendimento) > 0 ? Number(meta ?? metaAtendimento) : DEFAULT_META,
         updatedAt: firebase.database.ServerValue.TIMESTAMP,
       })
     }
     async function fbFetchRelatoriosOnce() {
       const snap = await fbDb.ref(FB_DATA_PATH).once("value")
-      return normalizeRelatorios(snap.val())
+      return parseCloudPayload(snap.val())
+    }
+
+    function parseCloudPayload(raw) {
+      const relatorios = normalizeRelatorios(raw)
+      let meta = DEFAULT_META
+      if (raw && typeof raw === "object") {
+        const m = Number(raw.metaAtendimento)
+        if (m > 0) meta = m
+      }
+      return { relatorios, metaAtendimento: meta }
     }
 
     const STORAGE_KEY = "perfil-lote:relatorios:v1"
@@ -1533,7 +1573,8 @@
       "Acima de 60 anos": "60+",
     }
 
-    const META_ATENDIMENTO = 2200
+    const DEFAULT_META = 2200
+    let metaAtendimento = DEFAULT_META
 
     function formatPercentual(valor) {
       return valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%"
@@ -1555,15 +1596,15 @@
         total: l.total,
         percentual: totalGeral.total > 0 ? Math.round((l.total / totalGeral.total) * 100) : 0,
       }))
-      const percentualMeta = META_ATENDIMENTO > 0 ? (inscritos / META_ATENDIMENTO) * 100 : 0
-      const percentualMetaQualificados = META_ATENDIMENTO > 0 ? (concludentes / META_ATENDIMENTO) * 100 : 0
+      const percentualMeta = metaAtendimento > 0 ? (inscritos / metaAtendimento) * 100 : 0
+      const percentualMetaQualificados = metaAtendimento > 0 ? (concludentes / metaAtendimento) * 100 : 0
       return {
         relatorios: rels.length,
         turmas: turmas.length,
         inscritos,
         concludentes,
         municipios: municipios.size,
-        meta: META_ATENDIMENTO,
+        meta: metaAtendimento,
         percentualMeta,
         percentualMetaQualificados,
         perfil,
@@ -1708,9 +1749,14 @@
       }
     }
 
-    function applyRemoteRelatorios(data) {
+    function applyRemoteRelatorios(payload) {
       syncingFromRemote = true
-      relatorios = normalizeRelatorios(data)
+      if (payload && payload.relatorios) {
+        relatorios = payload.relatorios
+        if (Number(payload.metaAtendimento) > 0) metaAtendimento = Number(payload.metaAtendimento)
+      } else {
+        relatorios = normalizeRelatorios(payload)
+      }
       if (selectedId && !relatorios.some((r) => r.id === selectedId)) {
         selectedId = null
         focusedTurmaId = null
@@ -1727,8 +1773,8 @@
         const local = JSON.parse(raw)
         if (!Array.isArray(local) || local.length === 0) return false
         const remote = await fbFetchRelatoriosOnce()
-        if (remote.length > 0) return false
-        await fbSaveRelatorios(local)
+        if (remote.relatorios.length > 0) return false
+        await fbSaveRelatorios(local, metaAtendimento)
         localStorage.removeItem(STORAGE_KEY)
         return true
       } catch {
@@ -1746,7 +1792,7 @@
       clearTimeout(saveTimer)
       saveTimer = setTimeout(async () => {
         try {
-          await fbSaveRelatorios(relatorios)
+          await fbSaveRelatorios(relatorios, metaAtendimento)
           setSyncStatus("live")
         } catch {
           setSyncStatus("error")
@@ -2168,6 +2214,7 @@
       const payload = {
         version: 1,
         exportadoEm: new Date().toISOString(),
+        metaAtendimento,
         relatorios: lista,
       }
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
@@ -2189,6 +2236,7 @@
           if (!Array.isArray(lista)) throw new Error("formato inválido")
           if (!confirm(`Restaurar backup com ${lista.length} relatório(s)? Isso substituirá todos os dados atuais.`)) return
           relatorios = normalizeRelatorios(lista)
+          if (Number(data.metaAtendimento) > 0) metaAtendimento = Number(data.metaAtendimento)
           selectedId = null
           focusedTurmaId = null
           expandedTurmas.clear()
@@ -2309,7 +2357,10 @@
           </div>
 
           <section class="section">
-            <h3 class="section-title">Meta de atendimento</h3>
+            <div class="section-title-row">
+              <h3 class="section-title">Meta de atendimento</h3>
+              <button type="button" class="btn-edit-meta" data-edit-meta title="Editar meta de atendimento">${icon("edit")}</button>
+            </div>
             <div class="panel">
               <div class="table-wrap">
                 <table class="meta-table">
@@ -2324,7 +2375,12 @@
                   </thead>
                   <tbody>
                     <tr>
-                      <td style="font-weight:600">${stats.meta.toLocaleString("pt-BR")}</td>
+                      <td style="font-weight:600">
+                        <span class="meta-cell-value">
+                          ${stats.meta.toLocaleString("pt-BR")}
+                          <button type="button" class="btn-edit-meta" data-edit-meta title="Editar meta">${icon("edit")}</button>
+                        </span>
+                      </td>
                       <td>${stats.inscritos.toLocaleString("pt-BR")}</td>
                       <td>${stats.concludentes.toLocaleString("pt-BR")}</td>
                       <td class="highlight">${formatPercentual(stats.percentualMeta)}</td>
@@ -2554,6 +2610,41 @@
         if (e.target.id === "modal-overlay") closeModal()
       })
       root.querySelector("[data-close]")?.addEventListener("click", closeModal)
+    }
+
+    function openModalMeta() {
+      openModal(`
+        <div class="modal" role="dialog">
+          <div class="modal-header">
+            <div>
+              <h2>Meta de atendimento</h2>
+              <p>Defina o número total de educandos previstos para a meta.</p>
+            </div>
+            <button class="btn-ghost" data-close aria-label="Fechar">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <form id="form-meta" class="form-grid">
+            <div class="field">
+              <label for="metaValor">Meta (nº de educandos)</label>
+              <input id="metaValor" type="number" min="1" step="1" value="${metaAtendimento}" required autofocus />
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-outline btn-sm" data-close>Cancelar</button>
+              <button type="submit" class="btn btn-sm">Salvar</button>
+            </div>
+          </form>
+        </div>`)
+
+      document.getElementById("form-meta")?.addEventListener("submit", (e) => {
+        e.preventDefault()
+        const valor = parseInt(document.getElementById("metaValor").value, 10)
+        if (!Number.isFinite(valor) || valor < 1) return
+        metaAtendimento = valor
+        saveStore()
+        closeModal()
+        renderMain()
+      })
     }
 
     function openModalRelatorio() {
@@ -2943,6 +3034,10 @@
     })
 
     document.getElementById("main").addEventListener("click", (e) => {
+      if (e.target.closest("[data-edit-meta]")) {
+        openModalMeta()
+        return
+      }
       const sexoBtn = e.target.closest("[data-sexo]")
       if (sexoBtn) {
         const form = sexoBtn.closest("[data-quick-add]")
