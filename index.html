@@ -2076,7 +2076,7 @@
         <td class="center">${totalGeral.feminino}</td>
         <td class="center">${totalGeral.masculino}</td>
         <td class="center">${totalGeral.outros}</td>
-        <td class="center">${totalGeral.total}</td>
+        <td class="center"><strong>${totalGeral.total}</strong></td>
       </tr></tbody></table></div>`
       return html
     }
@@ -2309,6 +2309,7 @@
     function renderDashboard() {
       const stats = calcularDashboard(relatorios)
       const duplicatasGlobal = listarDuplicatasGlobal(relatorios)
+      const todosAlunos = relatorios.flatMap((r) => toArray(r.turmas).flatMap((t) => toArray(t.alunos)))
       const cards = [
         { label: "Relatórios cadastrados", value: stats.relatorios.toLocaleString("pt-BR") },
         { label: "Turmas", value: stats.turmas.toLocaleString("pt-BR") },
@@ -2405,6 +2406,15 @@
               `).join("")}
             </ul>
           </div>` : ""}
+
+          <section class="section">
+            <h3 class="section-title">Perfil de Lote — Faixa Etária e Gênero</h3>
+            <div class="panel">
+              ${stats.inscritos === 0
+                ? `<p class="dashed-empty">Nenhum inscrito cadastrado ainda.</p>`
+                : renderFaixaTable(todosAlunos)}
+            </div>
+          </section>
 
           <section class="section">
             <h3 class="section-title">Indicador de perfil</h3>
