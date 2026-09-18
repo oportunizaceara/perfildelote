@@ -1491,11 +1491,13 @@
     function parseCloudPayload(raw) {
       const relatorios = normalizeRelatorios(raw)
       let meta = DEFAULT_META
+      let updatedAt = 0
       if (raw && typeof raw === "object") {
         const m = Number(raw.metaAtendimento)
         if (m > 0) meta = m
+        if (typeof raw.updatedAt === "number") updatedAt = raw.updatedAt
       }
-      return { relatorios, metaAtendimento: meta }
+      return { relatorios, metaAtendimento: meta, updatedAt }
     }
 
     const STORAGE_KEY = "perfil-lote:relatorios:v1"
@@ -1730,8 +1732,40 @@
     let authReady = false
     let syncingFromRemote = false
     let saveTimer = null
+    let saveInFlight = false
+    let pendingSave = false
+    let suppressRemoteApply = 0
     let unsubscribeDb = null
     let currentUser = null
+
+    function persistLocalCache() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          v: 1,
+          relatorios: normalizeRelatorios(relatorios),
+          metaAtendimento,
+          cachedAt: Date.now(),
+        }))
+      } catch {}
+    }
+
+    function loadLocalCache() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY)
+        if (!raw) return null
+        const data = JSON.parse(raw)
+        if (Array.isArray(data)) {
+          return { relatorios: normalizeRelatorios(data), metaAtendimento: DEFAULT_META, cachedAt: 0 }
+        }
+        return {
+          relatorios: normalizeRelatorios(data.relatorios ?? data.items),
+          metaAtendimento: Number(data.metaAtendimento) > 0 ? Number(data.metaAtendimento) : DEFAULT_META,
+          cachedAt: Number(data.cachedAt) || 0,
+        }
+      } catch {
+        return null
+      }
+    }
 
     function setSyncStatus(state) {
       const el = document.getElementById("sync-status")
@@ -1750,6 +1784,7 @@
     }
 
     function applyRemoteRelatorios(payload) {
+      if (suppressRemoteApply > 0 || pendingSave || saveInFlight) return
       syncingFromRemote = true
       if (payload && payload.relatorios) {
         relatorios = payload.relatorios
@@ -1761,43 +1796,97 @@
         selectedId = null
         focusedTurmaId = null
       }
+      persistLocalCache()
       render()
       syncingFromRemote = false
       setSyncStatus("live")
     }
 
+    async function recoverCacheIfNeeded() {
+      const remote = await fbFetchRelatoriosOnce()
+      const cache = loadLocalCache()
+      const remoteIds = new Set(remote.relatorios.map((r) => r.id))
+      const cacheHasExtra = cache?.relatorios?.some((r) => !remoteIds.has(r.id)) ?? false
+      const cacheHasMore = (cache?.relatorios?.length ?? 0) > remote.relatorios.length
+
+      if (cache?.relatorios?.length && (remote.relatorios.length === 0 || cacheHasExtra || cacheHasMore)) {
+        relatorios = cache.relatorios
+        if (Number(cache.metaAtendimento) > 0) metaAtendimento = cache.metaAtendimento
+        suppressRemoteApply++
+        try {
+          await fbSaveRelatorios(relatorios, metaAtendimento)
+        } finally {
+          suppressRemoteApply--
+        }
+        render()
+        return
+      }
+
+      if (remote.relatorios.length > 0) {
+        applyRemoteRelatorios(remote)
+      } else {
+        relatorios = []
+        render()
+      }
+    }
+
     async function migrateLocalToCloud() {
       try {
-        const raw = localStorage.getItem(STORAGE_KEY)
-        if (!raw) return false
-        const local = JSON.parse(raw)
-        if (!Array.isArray(local) || local.length === 0) return false
+        const cache = loadLocalCache()
+        if (!cache?.relatorios?.length) return false
         const remote = await fbFetchRelatoriosOnce()
         if (remote.relatorios.length > 0) return false
-        await fbSaveRelatorios(local, metaAtendimento)
-        localStorage.removeItem(STORAGE_KEY)
+        relatorios = cache.relatorios
+        if (Number(cache.metaAtendimento) > 0) metaAtendimento = cache.metaAtendimento
+        await fbSaveRelatorios(relatorios, metaAtendimento)
         return true
       } catch {
         return false
       }
     }
 
-    function loadStore() {
-      /* dados vêm do Firebase em tempo real */
+    async function flushSaveToCloud() {
+      if (!authReady) return
+      if (saveInFlight) {
+        pendingSave = true
+        return
+      }
+      const snapshot = normalizeRelatorios(relatorios)
+      const metaSnapshot = metaAtendimento
+      saveInFlight = true
+      suppressRemoteApply++
+      setSyncStatus("pending")
+      try {
+        await fbSaveRelatorios(snapshot, metaSnapshot)
+        persistLocalCache()
+        setSyncStatus("live")
+      } catch {
+        setSyncStatus("error")
+      } finally {
+        saveInFlight = false
+        suppressRemoteApply--
+        if (pendingSave) {
+          pendingSave = false
+          flushSaveToCloud()
+        }
+      }
     }
 
-    function saveStore() {
-      if (!authReady || syncingFromRemote) return
-      setSyncStatus("pending")
+    function saveStore(options = {}) {
+      const immediate = options === true || options?.immediate === true
+      persistLocalCache()
+      if (!authReady) return
+      if (syncingFromRemote) {
+        pendingSave = true
+        return
+      }
       clearTimeout(saveTimer)
-      saveTimer = setTimeout(async () => {
-        try {
-          await fbSaveRelatorios(relatorios, metaAtendimento)
-          setSyncStatus("live")
-        } catch {
-          setSyncStatus("error")
-        }
-      }, 350)
+      if (immediate) {
+        flushSaveToCloud()
+      } else {
+        setSyncStatus("pending")
+        saveTimer = setTimeout(flushSaveToCloud, 350)
+      }
     }
 
     function showLogin() {
@@ -1881,7 +1970,7 @@
     function addRelatorio(nome) {
       const id = uid()
       relatorios.push({ id, nome, turmas: [], criadoEm: hojeIso() })
-      saveStore()
+      saveStore({ immediate: true })
       return id
     }
 
@@ -1889,13 +1978,13 @@
       const id = uid()
       const hoje = hojeIso()
       relatorios.push({ id, nome, turmas, criadoEm: hoje, importadoEm: hoje })
-      saveStore()
+      saveStore({ immediate: true })
       return id
     }
 
     function removeRelatorio(id) {
       relatorios = relatorios.filter((r) => r.id !== id)
-      saveStore()
+      saveStore({ immediate: true })
     }
 
     function addTurma(relatorioId, turma) {
@@ -2240,7 +2329,7 @@
           selectedId = null
           focusedTurmaId = null
           expandedTurmas.clear()
-          saveStore()
+          saveStore({ immediate: true })
           render()
           const msg = document.getElementById("import-msg")
           msg.textContent = `Backup restaurado: ${lista.length} relatório(s).`
@@ -2651,7 +2740,7 @@
         const valor = parseInt(document.getElementById("metaValor").value, 10)
         if (!Number.isFinite(valor) || valor < 1) return
         metaAtendimento = valor
-        saveStore()
+        saveStore({ immediate: true })
         closeModal()
         renderMain()
       })
@@ -3131,9 +3220,19 @@
       if (user) {
         showApp(user)
         await migrateLocalToCloud()
+        await recoverCacheIfNeeded()
         startRealtimeSync()
       } else {
         showLogin()
+      }
+    })
+
+    window.addEventListener("pagehide", () => {
+      persistLocalCache()
+      if (authReady && saveTimer) {
+        clearTimeout(saveTimer)
+        saveTimer = null
+        flushSaveToCloud()
       }
     })
   </script>
