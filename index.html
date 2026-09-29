@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Perfil de Lote - Relatórios de Turmas</title>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.2/html2pdf.bundle.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -1109,6 +1110,77 @@
       padding-top: .5rem;
     }
 
+    .modal.modal-wide { max-width: 36rem; width: 100%; }
+    .faixas-custom-wrap { margin-top: .5rem; }
+    .faixas-custom-head,
+    .faixas-custom-row {
+      display: grid;
+      grid-template-columns: 1fr 4.5rem 4.5rem 2rem;
+      gap: .5rem;
+      align-items: center;
+    }
+    .faixas-custom-head {
+      font-size: .75rem;
+      font-weight: 600;
+      color: var(--fg-muted);
+      margin-bottom: .375rem;
+    }
+    .faixas-custom-row input {
+      height: 2rem;
+      padding: 0 .5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg);
+      font-size: .8125rem;
+    }
+    .faixas-custom-row input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px var(--primary-soft);
+    }
+    .btn-icon-xs {
+      width: 2rem;
+      height: 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      background: none;
+      border-radius: var(--radius-sm);
+      color: var(--fg-muted);
+      cursor: pointer;
+    }
+    .btn-icon-xs:hover { background: var(--sidebar-accent); color: var(--destructive); }
+    .report-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem;
+      align-items: center;
+    }
+    .report-meta-grid {
+      display: grid;
+      gap: .75rem;
+      grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+      margin-bottom: 1.5rem;
+    }
+    .report-meta-item {
+      padding: .875rem 1rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--card);
+    }
+    .report-meta-item span {
+      display: block;
+      font-size: .75rem;
+      color: var(--fg-muted);
+      margin-bottom: .25rem;
+    }
+    .report-meta-item strong {
+      font-size: 1.125rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .periodo-fields.hidden { display: none; }
+
     /* ── Alerts ── */
     .alert-duplicados {
       margin-bottom: 1.5rem;
@@ -1337,6 +1409,10 @@
               <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
               Importar Excel
             </button>
+            <button class="dropdown-item" id="btn-gerar-relatorio-menu">
+              <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>
+              Gerar relatório
+            </button>
             <div class="dropdown-divider"></div>
             <button class="dropdown-item danger" id="btn-logout">
               <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
@@ -1361,6 +1437,10 @@
               <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
             </span>
             <span id="import-label">Importar Excel</span>
+          </button>
+          <button class="btn btn-outline" id="btn-gerar-relatorio">
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>
+            Gerar Relatório
           </button>
           <input type="file" id="file-input" accept=".xlsx" class="sr-only" />
           <input type="file" id="backup-input" accept=".json" class="sr-only" />
@@ -1514,22 +1594,60 @@
       { label: "Acima de 60 anos", min: 61, max: Infinity },
     ]
 
+    const FAIXAS_PRESETS = {
+      padrao: {
+        label: "Padrão (16–29, 30–45, 46–60, 60+)",
+        faixas: FAIXAS_ETARIAS,
+      },
+      decada: {
+        label: "Por década",
+        faixas: [
+          { label: "16 a 19 anos", min: 16, max: 19 },
+          { label: "20 a 29 anos", min: 20, max: 29 },
+          { label: "30 a 39 anos", min: 30, max: 39 },
+          { label: "40 a 49 anos", min: 40, max: 49 },
+          { label: "50 a 59 anos", min: 50, max: 59 },
+          { label: "Acima de 60 anos", min: 60, max: Infinity },
+        ],
+      },
+      quinquenal: {
+        label: "Intervalos de 5 anos",
+        faixas: [
+          { label: "16 a 20 anos", min: 16, max: 20 },
+          { label: "21 a 25 anos", min: 21, max: 25 },
+          { label: "26 a 30 anos", min: 26, max: 30 },
+          { label: "31 a 35 anos", min: 31, max: 35 },
+          { label: "36 a 40 anos", min: 36, max: 40 },
+          { label: "41 a 45 anos", min: 41, max: 45 },
+          { label: "46 a 50 anos", min: 46, max: 50 },
+          { label: "51 a 55 anos", min: 51, max: 55 },
+          { label: "56 a 60 anos", min: 56, max: 60 },
+          { label: "Acima de 60 anos", min: 61, max: Infinity },
+        ],
+      },
+    }
+
+    const MESES_NOME = [
+      "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+      "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+    ]
+
     function uid() {
       return Math.random().toString(36).slice(2) + Date.now().toString(36)
     }
 
-    function faixaDeIdade(idade) {
-      return FAIXAS_ETARIAS.find((f) => idade >= f.min && idade <= f.max)
+    function faixaDeIdade(idade, faixas = FAIXAS_ETARIAS) {
+      return faixas.find((f) => idade >= f.min && idade <= f.max)
     }
 
-    function calcularPerfil(alunos) {
+    function calcularPerfil(alunos, faixas = FAIXAS_ETARIAS) {
       const lista = toArray(alunos)
-      const linhas = FAIXAS_ETARIAS.map((f) => ({
+      const linhas = faixas.map((f) => ({
         label: f.label, feminino: 0, masculino: 0, outros: 0, total: 0,
       }))
       for (const aluno of lista) {
         if (!aluno || aluno.idade == null) continue
-        const faixa = faixaDeIdade(aluno.idade)
+        const faixa = faixaDeIdade(aluno.idade, faixas)
         if (!faixa) continue
         const linha = linhas.find((l) => l.label === faixa.label)
         if (!linha) continue
@@ -1545,6 +1663,128 @@
         total: linhas.reduce((s, l) => s + l.total, 0),
       }
       return { linhas, totalGeral }
+    }
+
+    function parseIsoDate(iso) {
+      if (!iso) return null
+      const d = new Date(`${iso}T12:00:00`)
+      return Number.isNaN(d.getTime()) ? null : d
+    }
+
+    function ultimoDiaMes(ano, mes) {
+      return new Date(ano, mes, 0).getDate()
+    }
+
+    function calcularPeriodoRelatorio(config) {
+      const y = Number(config.ano)
+      if (!Number.isFinite(y)) return null
+
+      if (config.periodoTipo === "ano") {
+        return {
+          inicio: `${y}-01-01`,
+          fim: `${y}-12-31`,
+          label: `Ano ${y}`,
+        }
+      }
+
+      const mIni = Number(config.mesInicio ?? config.mes)
+      const mFim = Number(config.mesFim ?? config.mes ?? config.mesInicio)
+      if (!Number.isFinite(mIni) || !Number.isFinite(mFim) || mIni < 1 || mIni > 12 || mFim < 1 || mFim > 12) {
+        return null
+      }
+      if (mIni > mFim) return null
+
+      const mmIni = String(mIni).padStart(2, "0")
+      const mmFim = String(mFim).padStart(2, "0")
+      const diaFim = ultimoDiaMes(y, mFim)
+      const label = mIni === mFim
+        ? `${MESES_NOME[mIni - 1]} de ${y}`
+        : `${MESES_NOME[mIni - 1]} a ${MESES_NOME[mFim - 1]} de ${y}`
+
+      return {
+        inicio: `${y}-${mmIni}-01`,
+        fim: `${y}-${mmFim}-${String(diaFim).padStart(2, "0")}`,
+        label,
+        mesInicio: mIni,
+        mesFim: mFim,
+      }
+    }
+
+    function turmaNoPeriodo(turma, periodoInicio, periodoFim) {
+      const ini = parseIsoDate(turma.dataInicio)
+      const fim = parseIsoDate(turma.dataFim)
+      const pIni = parseIsoDate(periodoInicio)
+      const pFim = parseIsoDate(periodoFim)
+      if (!pIni || !pFim) return true
+      if (!ini && !fim) return true
+      const tIni = ini || fim
+      const tFim = fim || ini
+      return tIni <= pFim && tFim >= pIni
+    }
+
+    function getAnosDisponiveis() {
+      const anos = new Set([new Date().getFullYear()])
+      for (const r of relatorios) {
+        for (const t of toArray(r.turmas)) {
+          for (const d of [t.dataInicio, t.dataFim]) {
+            if (d) anos.add(Number(d.slice(0, 4)))
+          }
+        }
+      }
+      return [...anos].filter((a) => Number.isFinite(a)).sort((a, b) => b - a)
+    }
+
+    function coletarDadosGeracaoRelatorio(config) {
+      const periodo = calcularPeriodoRelatorio(config)
+      if (!periodo) return null
+
+      const rels = config.relatorioId
+        ? relatorios.filter((r) => r.id === config.relatorioId)
+        : relatorios
+
+      const turmasFiltradas = []
+      const alunos = []
+      let concludentes = 0
+
+      for (const r of rels) {
+        for (const t of toArray(r.turmas)) {
+          if (!turmaNoPeriodo(t, periodo.inicio, periodo.fim)) continue
+          turmasFiltradas.push({ ...t, relatorioNome: r.nome, relatorioId: r.id })
+          alunos.push(...toArray(t.alunos))
+          concludentes += turmaConcludentes(t)
+        }
+      }
+
+      const escopoLabel = config.relatorioId
+        ? (rels[0]?.nome || "Relatório selecionado")
+        : "Todos os relatórios"
+
+      return {
+        alunos,
+        turmasFiltradas,
+        concludentes,
+        inscritos: alunos.length,
+        municipios: new Set(turmasFiltradas.map((t) => t.municipio?.trim()).filter(Boolean)).size,
+        periodo,
+        escopoLabel,
+        faixas: config.faixas,
+        faixasPresetLabel: config.faixasPresetLabel,
+      }
+    }
+
+    function parseFaixasPersonalizadas(container) {
+      const rows = container?.querySelectorAll("[data-faixa-row]") ?? []
+      const faixas = []
+      for (const row of rows) {
+        const label = row.querySelector("[data-faixa-label]")?.value?.trim()
+        const min = Number(row.querySelector("[data-faixa-min]")?.value)
+        const maxRaw = row.querySelector("[data-faixa-max]")?.value
+        const max = maxRaw === "" || maxRaw == null ? Infinity : Number(maxRaw)
+        if (!label || !Number.isFinite(min)) continue
+        if (maxRaw !== "" && maxRaw != null && !Number.isFinite(max)) continue
+        faixas.push({ label, min, max: max <= 0 ? Infinity : max })
+      }
+      return faixas
     }
 
     function calcularIdade(dataNascimento) {
@@ -1720,6 +1960,7 @@
       upload: '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>',
       plus: '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg>',
       check: '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>',
+      download: '<svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>',
     }
 
     function icon(name) { return ICONS[name] || "" }
@@ -1728,13 +1969,14 @@
     let relatorios = []
     let selectedId = null
     let focusedTurmaId = null
+    let relatorioGerado = null
     const expandedTurmas = new Set()
     let authReady = false
     let syncingFromRemote = false
-    let saveTimer = null
     let saveInFlight = false
     let pendingSave = false
-    let suppressRemoteApply = 0
+    let remoteRevision = 0
+    let lastAppliedUpdatedAt = 0
     let unsubscribeDb = null
     let currentUser = null
 
@@ -1767,6 +2009,19 @@
       }
     }
 
+    function cloudPayloadSignature(payload) {
+      const items = payload?.relatorios ? payload.relatorios : normalizeRelatorios(payload)
+      const meta = Number(payload?.metaAtendimento) > 0 ? Number(payload.metaAtendimento) : metaAtendimento
+      return JSON.stringify({ items, meta })
+    }
+
+    function localStateSignature() {
+      return JSON.stringify({
+        items: normalizeRelatorios(relatorios),
+        meta: metaAtendimento,
+      })
+    }
+
     function setSyncStatus(state) {
       const el = document.getElementById("sync-status")
       const label = document.getElementById("sync-label")
@@ -1784,14 +2039,27 @@
     }
 
     function applyRemoteRelatorios(payload) {
-      if (suppressRemoteApply > 0 || pendingSave || saveInFlight) return
-      syncingFromRemote = true
-      if (payload && payload.relatorios) {
-        relatorios = payload.relatorios
-        if (Number(payload.metaAtendimento) > 0) metaAtendimento = Number(payload.metaAtendimento)
-      } else {
-        relatorios = normalizeRelatorios(payload)
+      if (!authReady || !payload) return
+
+      const incomingUpdatedAt = Number(payload.updatedAt) || 0
+      if (incomingUpdatedAt > 0 && incomingUpdatedAt < lastAppliedUpdatedAt) return
+
+      const incoming = payload.relatorios ?? normalizeRelatorios(payload)
+      const incomingMeta = Number(payload.metaAtendimento) > 0
+        ? Number(payload.metaAtendimento)
+        : metaAtendimento
+
+      if (cloudPayloadSignature({ relatorios: incoming, metaAtendimento: incomingMeta }) === localStateSignature()) {
+        if (incomingUpdatedAt > lastAppliedUpdatedAt) lastAppliedUpdatedAt = incomingUpdatedAt
+        setSyncStatus("live")
+        return
       }
+
+      syncingFromRemote = true
+      remoteRevision++
+      relatorios = incoming
+      metaAtendimento = incomingMeta
+      if (incomingUpdatedAt > lastAppliedUpdatedAt) lastAppliedUpdatedAt = incomingUpdatedAt
       if (selectedId && !relatorios.some((r) => r.id === selectedId)) {
         selectedId = null
         focusedTurmaId = null
@@ -1802,91 +2070,63 @@
       setSyncStatus("live")
     }
 
-    async function recoverCacheIfNeeded() {
+    async function initializeDataFromCloud() {
       const remote = await fbFetchRelatoriosOnce()
-      const cache = loadLocalCache()
-      const remoteIds = new Set(remote.relatorios.map((r) => r.id))
-      const cacheHasExtra = cache?.relatorios?.some((r) => !remoteIds.has(r.id)) ?? false
-      const cacheHasMore = (cache?.relatorios?.length ?? 0) > remote.relatorios.length
+      if (remote.relatorios.length > 0) {
+        lastAppliedUpdatedAt = remote.updatedAt || 0
+        applyRemoteRelatorios(remote)
+        return
+      }
 
-      if (cache?.relatorios?.length && (remote.relatorios.length === 0 || cacheHasExtra || cacheHasMore)) {
+      const cache = loadLocalCache()
+      if (cache?.relatorios?.length) {
         relatorios = cache.relatorios
-        if (Number(cache.metaAtendimento) > 0) metaAtendimento = cache.metaAtendimento
-        suppressRemoteApply++
-        try {
-          await fbSaveRelatorios(relatorios, metaAtendimento)
-        } finally {
-          suppressRemoteApply--
-        }
+        metaAtendimento = cache.metaAtendimento ?? DEFAULT_META
+        await fbSaveRelatorios(relatorios, metaAtendimento)
+        persistLocalCache()
         render()
         return
       }
 
-      if (remote.relatorios.length > 0) {
-        applyRemoteRelatorios(remote)
-      } else {
-        relatorios = []
-        render()
-      }
-    }
-
-    async function migrateLocalToCloud() {
-      try {
-        const cache = loadLocalCache()
-        if (!cache?.relatorios?.length) return false
-        const remote = await fbFetchRelatoriosOnce()
-        if (remote.relatorios.length > 0) return false
-        relatorios = cache.relatorios
-        if (Number(cache.metaAtendimento) > 0) metaAtendimento = cache.metaAtendimento
-        await fbSaveRelatorios(relatorios, metaAtendimento)
-        return true
-      } catch {
-        return false
-      }
+      relatorios = []
+      render()
     }
 
     async function flushSaveToCloud() {
-      if (!authReady) return
+      if (!authReady || syncingFromRemote) return
       if (saveInFlight) {
         pendingSave = true
         return
       }
+
       const snapshot = normalizeRelatorios(relatorios)
       const metaSnapshot = metaAtendimento
+      const revisionAtStart = remoteRevision
       saveInFlight = true
-      suppressRemoteApply++
       setSyncStatus("pending")
       try {
         await fbSaveRelatorios(snapshot, metaSnapshot)
         persistLocalCache()
         setSyncStatus("live")
+        if (remoteRevision !== revisionAtStart) {
+          await fbSaveRelatorios(normalizeRelatorios(relatorios), metaAtendimento)
+        }
       } catch {
         setSyncStatus("error")
       } finally {
         saveInFlight = false
-        suppressRemoteApply--
-        if (pendingSave) {
+        const remoteChangedDuringSave = remoteRevision !== revisionAtStart
+        if (pendingSave || remoteChangedDuringSave) {
           pendingSave = false
           flushSaveToCloud()
         }
       }
     }
 
-    function saveStore(options = {}) {
-      const immediate = options === true || options?.immediate === true
+    function saveStore() {
       persistLocalCache()
-      if (!authReady) return
-      if (syncingFromRemote) {
-        pendingSave = true
-        return
-      }
-      clearTimeout(saveTimer)
-      if (immediate) {
-        flushSaveToCloud()
-      } else {
-        setSyncStatus("pending")
-        saveTimer = setTimeout(flushSaveToCloud, 350)
-      }
+      if (!authReady || syncingFromRemote) return
+      flushSaveToCloud()
     }
 
     function showLogin() {
@@ -1970,7 +2210,7 @@
     function addRelatorio(nome) {
       const id = uid()
       relatorios.push({ id, nome, turmas: [], criadoEm: hojeIso() })
-      saveStore({ immediate: true })
+      saveStore()
       return id
     }
 
@@ -1978,13 +2218,13 @@
       const id = uid()
       const hoje = hojeIso()
       relatorios.push({ id, nome, turmas, criadoEm: hoje, importadoEm: hoje })
-      saveStore({ immediate: true })
+      saveStore()
       return id
     }
 
     function removeRelatorio(id) {
       relatorios = relatorios.filter((r) => r.id !== id)
-      saveStore({ immediate: true })
+      saveStore()
     }
 
     function addTurma(relatorioId, turma) {
@@ -2140,8 +2380,8 @@
     }
 
     // --- Render ---
-    function renderFaixaTable(alunos) {
-      const { linhas, totalGeral } = calcularPerfil(alunos)
+    function renderFaixaTable(alunos, faixas = FAIXAS_ETARIAS) {
+      const { linhas, totalGeral } = calcularPerfil(alunos, faixas)
       let html = `<div class="table-wrap"><table>
         <thead><tr>
           <th>Faixa Etária</th>
@@ -2173,6 +2413,13 @@
     function renderBreadcrumb() {
       const el = document.getElementById("breadcrumb")
       if (!el) return
+      if (relatorioGerado) {
+        el.innerHTML = `
+          <button class="breadcrumb-item" data-bc-home>Dashboard</button>
+          <span class="breadcrumb-sep">›</span>
+          <span class="breadcrumb-item current">Relatório gerado</span>`
+        return
+      }
       const selected = getSelected()
       let html = `<button class="breadcrumb-item ${!selected ? "current" : ""}" data-bc-home>Dashboard</button>`
 
@@ -2329,7 +2576,7 @@
           selectedId = null
           focusedTurmaId = null
           expandedTurmas.clear()
-          saveStore({ immediate: true })
+          saveStore()
           render()
           const msg = document.getElementById("import-msg")
           msg.textContent = `Backup restaurado: ${lista.length} relatório(s).`
@@ -2393,6 +2640,161 @@
         }).join("")
       }
       nav.innerHTML = html
+    }
+
+    function renderRelatorioGerado() {
+      const { data } = relatorioGerado
+      const turmasResumo = data.turmasFiltradas.length === 0
+        ? `<p class="dashed-empty">Nenhuma turma encontrada no período selecionado.</p>`
+        : `<div class="table-wrap"><table>
+            <thead><tr>
+              <th>Relatório</th><th>Turma</th><th>Município</th><th>Curso</th>
+              <th>Período</th><th class="center">Inscritos</th><th class="center">Concludentes</th>
+            </tr></thead><tbody>
+            ${data.turmasFiltradas.map((t) => `
+              <tr>
+                <td>${escapeHtml(t.relatorioNome)}</td>
+                <td>${escapeHtml(t.turmaId)}</td>
+                <td>${escapeHtml(t.municipio || "—")}</td>
+                <td>${escapeHtml(t.curso || "—")}</td>
+                <td>${formatDate(t.dataInicio)} a ${formatDate(t.dataFim)}</td>
+                <td class="center">${toArray(t.alunos).length}</td>
+                <td class="center">${turmaConcludentes(t)}</td>
+              </tr>
+            `).join("")}
+            </tbody></table></div>`
+
+      return `
+        <div class="content">
+          <header class="page-header">
+            <div>
+              <h2>Relatório gerado</h2>
+              <p class="subtitle">Perfil de lote — ${escapeHtml(data.periodo.label)}</p>
+              <div class="meta">
+                <span class="meta-pill">${icon("folder")} ${escapeHtml(data.escopoLabel)}</span>
+                <span class="meta-pill">${icon("calendar")} ${escapeHtml(data.periodo.inicio)} a ${escapeHtml(data.periodo.fim)}</span>
+                <span class="meta-pill">Faixas: ${escapeHtml(data.faixasPresetLabel)}</span>
+              </div>
+            </div>
+            <div class="report-actions">
+              <button class="btn btn-outline btn-sm" id="btn-relatorio-voltar">Voltar</button>
+              <button class="btn btn-outline btn-sm" id="btn-relatorio-editar">Alterar filtros</button>
+              <button class="btn btn-outline btn-sm" id="btn-relatorio-exportar-pdf">${icon("download")} Baixar PDF</button>
+              <button class="btn btn-sm" id="btn-relatorio-exportar">${icon("download")} Exportar Excel</button>
+            </div>
+          </header>
+
+          <div class="report-meta-grid">
+            <div class="report-meta-item"><span>Turmas no período</span><strong>${data.turmasFiltradas.length.toLocaleString("pt-BR")}</strong></div>
+            <div class="report-meta-item"><span>Inscritos</span><strong>${data.inscritos.toLocaleString("pt-BR")}</strong></div>
+            <div class="report-meta-item"><span>Concludentes</span><strong>${data.concludentes.toLocaleString("pt-BR")}</strong></div>
+            <div class="report-meta-item"><span>Municípios</span><strong>${data.municipios.toLocaleString("pt-BR")}</strong></div>
+          </div>
+
+          <section class="section">
+            <h3 class="section-title">Perfil de Lote — Faixa Etária e Gênero</h3>
+            <div class="panel">
+              ${data.inscritos === 0
+                ? `<p class="dashed-empty">Nenhum inscrito no período selecionado.</p>`
+                : renderFaixaTable(data.alunos, data.faixas)}
+            </div>
+          </section>
+
+          <section class="section">
+            <h3 class="section-title">Turmas incluídas</h3>
+            <div class="panel">${turmasResumo}</div>
+          </section>
+        </div>`
+    }
+
+    function exportRelatorioExcel() {
+      if (!relatorioGerado) return
+      const { data } = relatorioGerado
+      const { linhas, totalGeral } = calcularPerfil(data.alunos, data.faixas)
+      const rows = [
+        ["Perfil de Lote — Relatório Gerado"],
+        ["Período", data.periodo.label],
+        ["Intervalo", `${formatDate(data.periodo.inicio)} a ${formatDate(data.periodo.fim)}`],
+        ["Escopo", data.escopoLabel],
+        ["Faixas etárias", data.faixasPresetLabel],
+        ["Turmas", data.turmasFiltradas.length],
+        ["Inscritos", data.inscritos],
+        ["Concludentes", data.concludentes],
+        [],
+        ["Faixa Etária", "Feminino", "Masculino", "Outros", "Total"],
+        ...linhas.map((l) => [l.label, l.feminino, l.masculino, l.outros, l.total]),
+        [totalGeral.label, totalGeral.feminino, totalGeral.masculino, totalGeral.outros, totalGeral.total],
+        [],
+        ["Turmas incluídas"],
+        ["Relatório", "Turma", "Município", "Curso", "Início", "Término", "Inscritos", "Concludentes"],
+        ...data.turmasFiltradas.map((t) => [
+          t.relatorioNome,
+          t.turmaId,
+          t.municipio || "",
+          t.curso || "",
+          formatDate(t.dataInicio),
+          formatDate(t.dataFim),
+          toArray(t.alunos).length,
+          turmaConcludentes(t),
+        ]),
+      ]
+      const ws = XLSX.utils.aoa_to_sheet(rows)
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, "Perfil de Lote")
+      const slug = data.periodo.label.replace(/\s+/g, "-").toLowerCase()
+      XLSX.writeFile(wb, `perfil-lote-${slug}.xlsx`)
+    }
+
+    function exportRelatorioPdf() {
+      if (!relatorioGerado || typeof html2pdf !== "function") return
+      const { data } = relatorioGerado
+      const { linhas, totalGeral } = calcularPerfil(data.alunos, data.faixas)
+
+      const faixaRows = linhas.map((l) => `
+        <tr>
+          <td style="padding:8px;border-bottom:1px solid #e7e5e4">${escapeHtml(l.label)}</td>
+          <td style="padding:8px;text-align:center;border-bottom:1px solid #e7e5e4">${l.feminino}</td>
+          <td style="padding:8px;text-align:center;border-bottom:1px solid #e7e5e4">${l.masculino}</td>
+          <td style="padding:8px;text-align:center;border-bottom:1px solid #e7e5e4">${l.outros}</td>
+          <td style="padding:8px;text-align:center;border-bottom:1px solid #e7e5e4;font-weight:600">${l.total}</td>
+        </tr>`).join("")
+
+      const el = document.createElement("div")
+      el.style.cssText = "font-family:Inter,Arial,sans-serif;padding:28px;color:#1c1917;width:760px;font-size:12px;line-height:1.5"
+      el.innerHTML = `
+        <h1 style="font-size:20px;margin:0 0 8px">Perfil de Lote</h1>
+        <p style="margin:0 0 20px;color:#57534e">${escapeHtml(data.periodo.label)} · ${formatDate(data.periodo.inicio)} a ${formatDate(data.periodo.fim)}</p>
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead>
+            <tr style="background:#4f46e5;color:#fff">
+              <th style="padding:8px;text-align:left">Faixa Etária</th>
+              <th style="padding:8px;text-align:center">Feminino</th>
+              <th style="padding:8px;text-align:center">Masculino</th>
+              <th style="padding:8px;text-align:center">Outros</th>
+              <th style="padding:8px;text-align:center">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${faixaRows}
+            <tr style="background:#eef2ff;font-weight:600">
+              <td style="padding:8px;border-top:1px solid #e7e5e4">${totalGeral.label}</td>
+              <td style="padding:8px;text-align:center;border-top:1px solid #e7e5e4">${totalGeral.feminino}</td>
+              <td style="padding:8px;text-align:center;border-top:1px solid #e7e5e4">${totalGeral.masculino}</td>
+              <td style="padding:8px;text-align:center;border-top:1px solid #e7e5e4">${totalGeral.outros}</td>
+              <td style="padding:8px;text-align:center;border-top:1px solid #e7e5e4">${totalGeral.total}</td>
+            </tr>
+          </tbody>
+        </table>`
+
+      document.body.appendChild(el)
+      const slug = data.periodo.label.replace(/\s+/g, "-").toLowerCase()
+      html2pdf().set({
+        margin: [10, 10, 10, 10],
+        filename: `perfil-lote-${slug}.pdf`,
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+        pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+      }).from(el).save().finally(() => el.remove())
     }
 
     function renderDashboard() {
@@ -2633,6 +3035,21 @@
     function renderMain() {
       const main = document.getElementById("main")
       if (!main) return
+
+      if (relatorioGerado) {
+        main.innerHTML = renderRelatorioGerado()
+        document.getElementById("btn-relatorio-voltar")?.addEventListener("click", () => {
+          relatorioGerado = null
+          render()
+        })
+        document.getElementById("btn-relatorio-editar")?.addEventListener("click", () => {
+          openModalGerarRelatorio(relatorioGerado.config)
+        })
+        document.getElementById("btn-relatorio-exportar")?.addEventListener("click", exportRelatorioExcel)
+        document.getElementById("btn-relatorio-exportar-pdf")?.addEventListener("click", exportRelatorioPdf)
+        return
+      }
+
       const selected = getSelected()
 
       if (!selected) {
@@ -2708,7 +3125,7 @@
       root.querySelector("#modal-overlay")?.addEventListener("click", (e) => {
         if (e.target.id === "modal-overlay") closeModal()
       })
-      root.querySelector("[data-close]")?.addEventListener("click", closeModal)
+      root.querySelectorAll("[data-close]").forEach((btn) => btn.addEventListener("click", closeModal))
     }
 
     function openModalMeta() {
@@ -2740,9 +3157,213 @@
         const valor = parseInt(document.getElementById("metaValor").value, 10)
         if (!Number.isFinite(valor) || valor < 1) return
         metaAtendimento = valor
-        saveStore({ immediate: true })
+        saveStore()
         closeModal()
         renderMain()
+      })
+    }
+
+    function renderMesOptions(selected) {
+      return MESES_NOME.map((nome, i) => {
+        const v = i + 1
+        return `<option value="${v}" ${v === Number(selected) ? "selected" : ""}>${nome}</option>`
+      }).join("")
+    }
+
+    function openModalGerarRelatorio(presetConfig) {
+      const anos = getAnosDisponiveis()
+      const agora = new Date()
+      const cfg = presetConfig ?? {
+        periodoTipo: "intervalo",
+        mesInicio: 1,
+        mesFim: agora.getMonth() + 1,
+        ano: agora.getFullYear(),
+        faixasPreset: "padrao",
+        relatorioId: selectedId || "",
+      }
+      if (cfg.periodoTipo === "mes") {
+        cfg.periodoTipo = "intervalo"
+        cfg.mesInicio = cfg.mes ?? cfg.mesInicio ?? 1
+        cfg.mesFim = cfg.mes ?? cfg.mesFim ?? cfg.mesInicio
+      }
+      const mesInicioOptions = renderMesOptions(cfg.mesInicio)
+      const mesFimOptions = renderMesOptions(cfg.mesFim)
+      const anoOptions = anos.map((a) =>
+        `<option value="${a}" ${a === Number(cfg.ano) ? "selected" : ""}>${a}</option>`).join("")
+      const faixaOptions = Object.entries(FAIXAS_PRESETS).map(([key, p]) =>
+        `<option value="${key}" ${key === cfg.faixasPreset ? "selected" : ""}>${escapeHtml(p.label)}</option>`).join("")
+        + `<option value="personalizado" ${cfg.faixasPreset === "personalizado" ? "selected" : ""}>Personalizado</option>`
+      const relOptions = `<option value="">Todos os relatórios</option>` + relatorios.map((r) =>
+        `<option value="${r.id}" ${r.id === cfg.relatorioId ? "selected" : ""}>${escapeHtml(r.nome)}</option>`).join("")
+      const customFaixas = cfg.faixasPreset === "personalizado" && cfg.faixas?.length
+        ? cfg.faixas
+        : FAIXAS_PRESETS.padrao.faixas
+      const isIntervalo = cfg.periodoTipo !== "ano"
+
+      openModal(`
+        <div class="modal modal-wide" role="dialog">
+          <div class="modal-header">
+            <div>
+              <h2>Gerar relatório</h2>
+              <p>Escolha o intervalo de meses, as faixas etárias e o escopo.</p>
+            </div>
+            <button class="btn-ghost" data-close aria-label="Fechar">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <form id="form-gerar-relatorio" class="form-grid">
+            <div class="field">
+              <label for="gerar-escopo">Escopo</label>
+              <select id="gerar-escopo">${relOptions}</select>
+              <p class="field-hint">Filtra turmas de um relatório específico ou de todos.</p>
+            </div>
+            <div class="field">
+              <label for="gerar-periodo-tipo">Período do relatório</label>
+              <select id="gerar-periodo-tipo">
+                <option value="intervalo" ${isIntervalo ? "selected" : ""}>Intervalo de meses</option>
+                <option value="ano" ${cfg.periodoTipo === "ano" ? "selected" : ""}>Ano completo</option>
+              </select>
+            </div>
+            <div class="periodo-fields ${isIntervalo ? "" : "hidden"}" id="gerar-campo-intervalo">
+              <div class="form-row two" style="margin-bottom:.75rem">
+                <div class="field">
+                  <label for="gerar-mes-inicio">De (mês inicial)</label>
+                  <select id="gerar-mes-inicio">${mesInicioOptions}</select>
+                </div>
+                <div class="field">
+                  <label for="gerar-mes-fim">Até (mês final)</label>
+                  <select id="gerar-mes-fim">${mesFimOptions}</select>
+                </div>
+              </div>
+              <div class="field">
+                <label for="gerar-ano-intervalo">Ano</label>
+                <select id="gerar-ano-intervalo">${anoOptions}</select>
+                <p class="field-hint">Ex.: Janeiro a Março, ou Janeiro a Outubro no mesmo ano.</p>
+              </div>
+            </div>
+            <div class="field periodo-fields ${isIntervalo ? "hidden" : ""}" id="gerar-campo-ano">
+              <label for="gerar-ano">Ano</label>
+              <select id="gerar-ano">${anoOptions}</select>
+            </div>
+            <div class="field">
+              <label for="gerar-faixas">Divisão das faixas etárias</label>
+              <select id="gerar-faixas">${faixaOptions}</select>
+            </div>
+            <div class="faixas-custom-wrap ${cfg.faixasPreset === "personalizado" ? "" : "hidden"}" id="gerar-faixas-custom">
+              <p class="field-hint" style="margin-bottom:.5rem">Defina cada faixa (deixe máximo vazio para “sem limite”).</p>
+              <div class="faixas-custom-head">
+                <span>Descrição</span><span>Mín.</span><span>Máx.</span><span></span>
+              </div>
+              <div id="gerar-faixas-rows">
+                ${customFaixas.map((f, i) => `
+                  <div class="faixas-custom-row" data-faixa-row>
+                    <input data-faixa-label type="text" value="${escapeHtml(f.label)}" placeholder="Ex: 16 a 29 anos" />
+                    <input data-faixa-min type="number" min="0" value="${f.min === Infinity ? "" : f.min}" />
+                    <input data-faixa-max type="number" min="0" value="${f.max === Infinity ? "" : f.max}" placeholder="∞" />
+                    <button type="button" class="btn-icon-xs" data-remove-faixa title="Remover" ${i === 0 ? "disabled style='opacity:.3'" : ""}>×</button>
+                  </div>
+                `).join("")}
+              </div>
+              <button type="button" class="btn btn-outline btn-sm" id="gerar-add-faixa" style="margin-top:.5rem;width:auto">${icon("plus")} Adicionar faixa</button>
+            </div>
+            <p id="gerar-erro" class="form-erro hidden"></p>
+            <div class="form-actions">
+              <button type="button" class="btn btn-outline btn-sm" data-close>Cancelar</button>
+              <button type="submit" class="btn btn-sm">Gerar relatório</button>
+            </div>
+          </form>
+        </div>`)
+
+      const tipoEl = document.getElementById("gerar-periodo-tipo")
+      const faixasEl = document.getElementById("gerar-faixas")
+      const customWrap = document.getElementById("gerar-faixas-custom")
+      const rowsEl = document.getElementById("gerar-faixas-rows")
+
+      tipoEl?.addEventListener("change", () => {
+        const isIntervalo = tipoEl.value === "intervalo"
+        document.getElementById("gerar-campo-intervalo")?.classList.toggle("hidden", !isIntervalo)
+        document.getElementById("gerar-campo-ano")?.classList.toggle("hidden", isIntervalo)
+      })
+
+      faixasEl?.addEventListener("change", () => {
+        customWrap?.classList.toggle("hidden", faixasEl.value !== "personalizado")
+      })
+
+      document.getElementById("gerar-add-faixa")?.addEventListener("click", () => {
+        const row = document.createElement("div")
+        row.className = "faixas-custom-row"
+        row.dataset.faixaRow = ""
+        row.innerHTML = `
+          <input data-faixa-label type="text" placeholder="Ex: 16 a 29 anos" />
+          <input data-faixa-min type="number" min="0" value="0" />
+          <input data-faixa-max type="number" min="0" placeholder="∞" />
+          <button type="button" class="btn-icon-xs" data-remove-faixa title="Remover">×</button>`
+        rowsEl?.appendChild(row)
+      })
+
+      rowsEl?.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-remove-faixa]")
+        if (!btn || btn.disabled) return
+        btn.closest("[data-faixa-row]")?.remove()
+      })
+
+      document.getElementById("form-gerar-relatorio")?.addEventListener("submit", (e) => {
+        e.preventDefault()
+        const erro = document.getElementById("gerar-erro")
+        const periodoTipo = tipoEl.value
+        const mesInicio = periodoTipo === "intervalo"
+          ? Number(document.getElementById("gerar-mes-inicio").value)
+          : 1
+        const mesFim = periodoTipo === "intervalo"
+          ? Number(document.getElementById("gerar-mes-fim").value)
+          : 12
+        const ano = periodoTipo === "intervalo"
+          ? Number(document.getElementById("gerar-ano-intervalo").value)
+          : Number(document.getElementById("gerar-ano").value)
+
+        if (periodoTipo === "intervalo" && mesInicio > mesFim) {
+          erro.textContent = "O mês inicial não pode ser posterior ao mês final."
+          erro.classList.remove("hidden")
+          return
+        }
+
+        const faixasPreset = faixasEl.value
+        let faixas
+        let faixasPresetLabel
+        if (faixasPreset === "personalizado") {
+          faixas = parseFaixasPersonalizadas(rowsEl)
+          faixasPresetLabel = "Personalizado"
+          if (faixas.length === 0) {
+            erro.textContent = "Adicione ao menos uma faixa etária válida."
+            erro.classList.remove("hidden")
+            return
+          }
+        } else {
+          faixas = FAIXAS_PRESETS[faixasPreset].faixas
+          faixasPresetLabel = FAIXAS_PRESETS[faixasPreset].label
+        }
+        const config = {
+          periodoTipo,
+          mesInicio,
+          mesFim,
+          ano,
+          faixasPreset,
+          faixas,
+          faixasPresetLabel,
+          relatorioId: document.getElementById("gerar-escopo").value || "",
+        }
+        const data = coletarDadosGeracaoRelatorio(config)
+        if (!data) {
+          erro.textContent = "Período inválido. Verifique os meses e o ano."
+          erro.classList.remove("hidden")
+          return
+        }
+        erro.classList.add("hidden")
+        relatorioGerado = { config, data }
+        selectedId = null
+        focusedTurmaId = null
+        closeModal()
+        render()
       })
     }
 
@@ -2951,6 +3572,7 @@
       toggleMobileSidebar(false)
       selectedId = null
       focusedTurmaId = null
+      relatorioGerado = null
       render()
     })
 
@@ -2992,6 +3614,11 @@
       document.getElementById("file-input").click()
     })
 
+    document.getElementById("btn-gerar-relatorio-menu").addEventListener("click", () => {
+      closeDropdowns()
+      openModalGerarRelatorio()
+    })
+
     document.getElementById("btn-logout").addEventListener("click", handleLogout)
 
     document.getElementById("form-login").addEventListener("submit", handleLoginSubmit)
@@ -3016,6 +3643,7 @@
       if (e.target.closest("[data-bc-home]")) {
         selectedId = null
         focusedTurmaId = null
+        relatorioGerado = null
         render()
         return
       }
@@ -3038,6 +3666,10 @@
 
     document.getElementById("btn-importar").addEventListener("click", () => {
       document.getElementById("file-input").click()
+    })
+
+    document.getElementById("btn-gerar-relatorio").addEventListener("click", () => {
+      openModalGerarRelatorio()
     })
 
     document.getElementById("file-input").addEventListener("change", async (e) => {
@@ -3083,6 +3715,7 @@
       if (e.target.closest("[data-home]")) {
         selectedId = null
         focusedTurmaId = null
+        relatorioGerado = null
         render()
         return
       }
@@ -3090,6 +3723,7 @@
       if (sel) {
         selectedId = sel.dataset.select
         focusedTurmaId = null
+        relatorioGerado = null
         toggleMobileSidebar(false)
         render()
         return
@@ -3219,19 +3853,20 @@
     fbOnAuthChange(async (user) => {
       if (user) {
         showApp(user)
-        await migrateLocalToCloud()
-        await recoverCacheIfNeeded()
+        await initializeDataFromCloud()
         startRealtimeSync()
       } else {
+        if (unsubscribeDb) {
+          unsubscribeDb()
+          unsubscribeDb = null
+        }
         showLogin()
       }
     })
 
     window.addEventListener("pagehide", () => {
       persistLocalCache()
-      if (authReady && saveTimer) {
-        clearTimeout(saveTimer)
-        saveTimer = null
+      if (authReady && !saveInFlight) {
         flushSaveToCloud()
       }
     })
