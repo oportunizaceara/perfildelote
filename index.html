@@ -1517,13 +1517,32 @@
 
     function normalizeRelatorio(r) {
       if (!r || typeof r !== "object") return null
-      return {
+      const out = {
         id: r.id || uid(),
         nome: String(r.nome ?? "Relatório").trim(),
         criadoEm: r.criadoEm || "",
-        importadoEm: r.importadoEm || undefined,
         turmas: toArray(r.turmas).map(normalizeTurma).filter(Boolean),
       }
+      if (r.importadoEm) out.importadoEm = r.importadoEm
+      return out
+    }
+
+    /** Firebase Realtime Database rejeita `undefined` e some arrays vazios. */
+    function sanitizeForFirebase(value) {
+      if (value === undefined) return null
+      if (value === null || typeof value !== "object") {
+        if (typeof value === "number" && !Number.isFinite(value)) return 0
+        return value
+      }
+      if (Array.isArray(value)) {
+        return value.map(sanitizeForFirebase)
+      }
+      const out = {}
+      for (const [k, v] of Object.entries(value)) {
+        if (v === undefined) continue
+        out[k] = sanitizeForFirebase(v)
+      }
+      return out
     }
 
     /** Normaliza relatórios e todos os níveis aninhados (turmas, alunos). */
@@ -1555,7 +1574,7 @@
       return () => r.off("value")
     }
     async function fbSaveRelatorios(data, meta) {
-      const items = normalizeRelatorios(data)
+      const items = sanitizeForFirebase(normalizeRelatorios(data))
       await fbDb.ref(FB_DATA_PATH).set({
         v: 1,
         items,
@@ -2040,6 +2059,7 @@
 
     function applyRemoteRelatorios(payload) {
       if (!authReady || !payload) return
+      if (saveInFlight || pendingSave) return
 
       const incomingUpdatedAt = Number(payload.updatedAt) || 0
       if (incomingUpdatedAt > 0 && incomingUpdatedAt < lastAppliedUpdatedAt) return
@@ -2072,19 +2092,35 @@
 
     async function initializeDataFromCloud() {
       const remote = await fbFetchRelatoriosOnce()
+      const cache = loadLocalCache()
+      const cacheHasData = (cache?.relatorios?.length ?? 0) > 0
+      const cacheNewer = (cache?.cachedAt || 0) > (remote.updatedAt || 0)
+
+      if (cacheHasData && (remote.relatorios.length === 0 || cacheNewer)) {
+        const cacheSig = cloudPayloadSignature({
+          relatorios: cache.relatorios,
+          metaAtendimento: cache.metaAtendimento,
+        })
+        const remoteSig = cloudPayloadSignature(remote)
+        if (cacheSig !== remoteSig) {
+          relatorios = cache.relatorios
+          metaAtendimento = cache.metaAtendimento ?? DEFAULT_META
+          persistLocalCache()
+          render()
+          try {
+            await fbSaveRelatorios(relatorios, metaAtendimento)
+            setSyncStatus("live")
+          } catch (err) {
+            console.error("Falha ao enviar cache local:", err)
+            setSyncStatus("error")
+          }
+          return
+        }
+      }
+
       if (remote.relatorios.length > 0) {
         lastAppliedUpdatedAt = remote.updatedAt || 0
         applyRemoteRelatorios(remote)
-        return
-      }
-
-      const cache = loadLocalCache()
-      if (cache?.relatorios?.length) {
-        relatorios = cache.relatorios
-        metaAtendimento = cache.metaAtendimento ?? DEFAULT_META
-        await fbSaveRelatorios(relatorios, metaAtendimento)
-        persistLocalCache()
-        render()
         return
       }
 
@@ -2101,22 +2137,18 @@
 
       const snapshot = normalizeRelatorios(relatorios)
       const metaSnapshot = metaAtendimento
-      const revisionAtStart = remoteRevision
       saveInFlight = true
       setSyncStatus("pending")
       try {
         await fbSaveRelatorios(snapshot, metaSnapshot)
         persistLocalCache()
         setSyncStatus("live")
-        if (remoteRevision !== revisionAtStart) {
-          await fbSaveRelatorios(normalizeRelatorios(relatorios), metaAtendimento)
-        }
-      } catch {
+      } catch (err) {
+        console.error("Falha ao salvar no Firebase:", err)
         setSyncStatus("error")
       } finally {
         saveInFlight = false
-        const remoteChangedDuringSave = remoteRevision !== revisionAtStart
-        if (pendingSave || remoteChangedDuringSave) {
+        if (pendingSave) {
           pendingSave = false
           flushSaveToCloud()
         }
@@ -2126,7 +2158,7 @@
     function saveStore() {
       persistLocalCache()
       if (!authReady || syncingFromRemote) return
-      flushSaveToCloud()
+      return flushSaveToCloud()
     }
 
     function showLogin() {
